@@ -6,12 +6,13 @@ import random
 m_access_delay = 30
 m_bottleneck_delay = 30
 m_packetsize = 1024  # byte
-m_simtime = 50000
+m_simtime = 100
 
 sources = ["10.0.0.1", "10.0.0.2", "10.0.0.3"]
 destination = ["10.0.0.6", "10.0.0.7", "10.0.0.8"]
 intermediate = ["10.0.0.4", "10.0.0.5"]
 agent = "10.0.0.3"
+
 link = [tuple([sources[0], intermediate[0]]), tuple([sources[1], intermediate[0]]), tuple([agent, intermediate[0]]),
         tuple([intermediate[0], intermediate[1]]), tuple([intermediate[1], destination[0]]),
         tuple([intermediate[1], destination[1]]), tuple([intermediate[1], destination[2]])]
@@ -55,23 +56,58 @@ class BroadcastPipe(object):
         self.pipes.append(pipe)
         return pipe
 
+def medi_run(env, name, out_pipe, in_pipe):
+    while True:
+        cwnd = 1
+        yield env.timeout(random.randint(6, 8))
+        received = yield in_pipe.get()
+        #print(received)
+        if received["target"] == "node" and received["des"] == name :
+            print(str(env.now) + " intermediate node " + str(name) +" received packet")
+            Send(name,received,out_pipe)
+
 
 def source_run(env, name, out_pipe, in_pipe):
-    cwnd = 5
-    yield env.timeout(random.randint(6, 10))
-    for i in range(0, cwnd):
-        packet = MakePacket(name, cwnd, i)
-        out_pipe.put(packet)
-
+    while True:
+        cwnd = 1
+        yield env.timeout(random.randint(6, 8))
+        for i in range(0, cwnd):
+            packet = MakePacket(name, cwnd, i)
+            Send(name,packet,out_pipe)
+        received = yield in_pipe.get()
+        #print(received)
+        if received["target"] == "node" and received["des"] == name :
+            print(str(env.now) + " node " + str(name) +" received packet")
+            if received["route"][-1] != name:
+                Send(name,received,out_pipe)
+            else:
+                print("finally received")
+            #print(packet)
 
 # def oac_source_run(env, name, pipe, out_pipe , in_pipe):
-
+def des_run(env, name, out_pipe, in_pipe):
+    while True:
+        #cwnd = 1
+        #yield env.timeout(random.randint(6, 8))
+        #for i in range(0, cwnd):
+        #    packet = MakePacket(name, cwnd, i)
+        #    Send(name,packet,out_pipe)
+        received = yield in_pipe.get()
+        #print(received)
+        if received["target"] == "node" and received["des"] == name :
+            print(str(env.now) + " destination node " + str(name) +" received packet")
+            if received["route"][-1] != name:
+                Send(name,received,out_pipe)
+            else:
+                print("finally received")
+            #print(packet)
 
 def link_run(env, name, out_pipe, in_pipe):
     while True:
         packet = yield in_pipe.get()
         if packet['target'] == "link" and set([packet['start'], packet['des']]) == set(name):
             print(str(env.now) + " link " + str(name) +" received packet")
+            Send(name, packet, out_pipe)
             #print(packet)
 
 
@@ -113,6 +149,16 @@ def MakePacket(start, cwnd, cnt, ack=False):
     return packet
 
     # SendToLink(start, route[route.index(start) + 1], packet)
+def Send(name,packet,out_pipe):
+    if packet["target"] == "node":
+        packet["start"] = name
+        packet["des"] = packet["route"][packet["route"].index(name) + 1]
+    if name in sources or name in destination or name in intermediate:
+        packet["target"] = "link"
+    else:
+        packet["target"] = "node"
+
+    out_pipe.put(packet)
 
 
 def SendToLink(start, des, packet):
@@ -128,9 +174,14 @@ def main():
 
     for s in sources:
         env.process(source_run(env, s, bc_pipe, bc_pipe.get_output_conn()))
+        # add agent
     # env.process(oac_source_run(env, agent,bc_pipe,bc_pipe.get_output_conn()))
     for l in link:
         env.process(link_run(env, l, bc_pipe, bc_pipe.get_output_conn()))
+    for medi in intermediate:
+        env.process(medi_run(env, medi, bc_pipe, bc_pipe.get_output_conn()))
+    for des in destination:
+        env.process(des_run(env, des, bc_pipe, bc_pipe.get_output_conn()))
 
     env.run(until=m_simtime)
 
