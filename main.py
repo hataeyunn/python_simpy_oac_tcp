@@ -6,7 +6,7 @@ import random
 m_access_delay = 30
 m_bottleneck_delay = 30
 m_packetsize = 1024  # byte
-m_simtime = 100000
+m_simtime = 50000
 
 sources = ["10.0.0.1", "10.0.0.2", "10.0.0.3"]
 destination = ["10.0.0.6", "10.0.0.7", "10.0.0.8"]
@@ -62,6 +62,7 @@ def medi_run(env, name, out_pipe, in_pipe):
         cwnd = 1
         yield env.timeout(random.randint(1,5))
         received = yield in_pipe.get()
+        #print("meid!!"+str(received))
         if received["target"] == "node" and received["des"] == name :
             #print(received)
 
@@ -71,24 +72,29 @@ def medi_run(env, name, out_pipe, in_pipe):
 
 def source_run(env, name, out_pipe, in_pipe):
     count = 0
-    while count != 200:
+    ack_count = 0
+    check = 5
+    while True:
         # TODO TCP 큐빅 부분 구현
         cwnd = 1
         yield env.timeout(0.1)
-        for i in range(0, cwnd):
-            packet = MakePacket(name, cwnd, i)
-            Send(name,packet,out_pipe)
-            print(str(env.now) + " node " + str(name) +" sent packet")
-            count = count + 1
-            print("source : "+ str(count))
+        if check != 0:
+            for i in range(0, cwnd):
+                packet = MakePacket(name, cwnd, i)
+                Send(name,packet,out_pipe)
+                print(str(env.now) + " node " + str(name) +" sent packet")
+                count = count + 1
+                print("source : "+ str(count))
+                check = check -1
+
         received = yield in_pipe.get()
         #print(received)
         if received["target"] == "node" and received["des"] == name :
-            print(str(env.now) + " node " + str(name) +" received packet")
-            if received["route"][-1] != name:
-                Send(name,received,out_pipe)
-            else:
-                print("finally received")
+            print(str(env.now) + " node " + str(name) +" received packet!!!!!!!!!!!!!")
+            if received["route"][-1] == name:
+                print("ack received")
+                ack_count += 1
+                print(ack_count)
                 # TODO 이거 ack파트인데, ack 받았을때 보낸거랑 매칭하기
                 # TODO 보낸거 리스트에 쌓아두는것도 해야함. Queue구현해야할듯
             #print(packet)
@@ -118,7 +124,11 @@ def des_run(env, name, out_pipe, in_pipe):
                 print("finally received ")
                 if count == int(count):
                     print("destination : " + str(int(count)))
-                    # TODO 확실히 받았으면 ACK 구현하기
+                    packet = MakePacket(name, received["cwnd"], received["cnt"],True)
+
+                    Send(name, packet, out_pipe)
+                    print("sent ack")
+
                 received = None
                 # TODO 만약 예상하는 다음 패킷이 안왔을 경우 중복 ACK 보내기
             #print(packet)
@@ -128,6 +138,7 @@ def link_run(env, name, out_pipe, in_pipe):
         #TODO CHANNEL 모델, 지연, 손실.. 등등 구현하기
         packet = yield in_pipe.get()
         if packet['target'] == "link" and set([packet['start'], packet['des']]) == set(name):
+            print(packet['route'])
             print(str(env.now) + " link " + str(name) +" received packet")
             Send(name, packet, out_pipe)
             #print(packet)
@@ -150,23 +161,29 @@ def routing(A, ack=False):
 
 
 def MakePacket(start, cwnd, cnt, ack=False):
-    route = routing(start)
+    route = routing(start,ack)
     packet = OrderedDict()
     if not ack:
         packet["size"] = m_packetsize
         packet["route"] = route
         packet["cnt"] = cnt
-        packet["num"] = cwnd
+        packet["cwnd"] = cwnd
         packet["source"] = start
         packet["start"] = start
         packet["des"] = route[route.index(start) + 1]
         packet["target"] = "link"
+        packet["ack"] = ack
     else:
+        #print(route)
+        packet["size"] = m_packetsize
+        packet["route"] = route
         packet["cnt"] = cnt
+        packet["cwnd"] = cwnd
         packet["source"] = start
-        packet["target"] = "link"
         packet["start"] = start
         packet["des"] = route[route.index(start) + 1]
+        packet["target"] = "link"
+        packet["ack"] = ack
 
     return packet
 
@@ -193,9 +210,9 @@ def main():
     env = simpy.Environment()
     bc_pipe = BroadcastPipe(env)
 
-    #env.process(source_run(env,sources[0],bc_pipe,bc_pipe.get_output_conn()))
-    for s in sources:
-        env.process(source_run(env, s, bc_pipe, bc_pipe.get_output_conn()))
+    env.process(source_run(env,sources[0],bc_pipe,bc_pipe.get_output_conn()))
+    #for s in sources:
+        #env.process(source_run(env, s, bc_pipe, bc_pipe.get_output_conn()))
         #TODO add agent
     # env.process(oac_source_run(env, agent,bc_pipe,bc_pipe.get_output_conn()))
     for l in link:
