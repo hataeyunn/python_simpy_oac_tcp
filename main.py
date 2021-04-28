@@ -59,18 +59,20 @@ class BroadcastPipe(object):
 def medi_run(env, name, out_pipe, in_pipe):
     while True:
         #TODO 받는거 QUEUE에 넣고 QUEUEING DELAY 적용해야함 (CONGESTION 이겠쥬?)
-        cwnd = 1
         yield env.timeout(random.randint(1,5))
         received = yield in_pipe.get()
         #print("meid!!"+str(received))
         if received["target"] == "node" and received["des"] == name :
             #print(received)
 
-            print(str(env.now) + " intermediate node " + str(name) +" received packet")
+            #print(str(env.now) + " intermediate node " + str(name) +" received packet")
             Send(name,received,out_pipe)
 
 
 def source_run(env, name, out_pipe, in_pipe):
+    file_size = 5120000
+    total_num_cwnd = file_size/m_packetsize
+    sent= []
     count = 0
     ack_count = 0
     check = 5
@@ -79,31 +81,36 @@ def source_run(env, name, out_pipe, in_pipe):
         cwnd = 1
         yield env.timeout(0.1)
         if check != 0:
-            for i in range(0, cwnd):
-                packet = MakePacket(name, cwnd, i)
-                Send(name,packet,out_pipe)
-                print(str(env.now) + " node " + str(name) +" sent packet")
-                count = count + 1
-                print("source : "+ str(count))
-                check = check -1
+
+            packet = MakePacket(name, check, 0)
+            sent.append([check,0])
+            Send(name,packet,out_pipe)
+            print(str(env.now) + " node " + str(name) +" sent packet")
+            count = count + 1
+            print("source : "+ str(count))
+            check = check -1
 
         received = yield in_pipe.get()
         #print(received)
         if received["target"] == "node" and received["des"] == name :
-            print(str(env.now) + " node " + str(name) +" received packet!!!!!!!!!!!!!")
+            print(str(env.now) + " node " + str(name) +" received Ack packet")
             if received["route"][-1] == name:
                 print("ack received")
-                ack_count += 1
                 print(ack_count)
-                # TODO 이거 ack파트인데, ack 받았을때 보낸거랑 매칭하기
-                # TODO 보낸거 리스트에 쌓아두는것도 해야함. Queue구현해야할듯
-            #print(packet)
+                try :
+                    ack_count += 1
+                    sent.remove([received["cwnd"],packet["cnt"]])
+                except ValueError:
+                    print("there is no sent data of ack "+str(received["cwnd"])+" "+str(received["cnt"]))
+
 
 # def oac_source_run(env, name, pipe, out_pipe , in_pipe):
 def des_run(env, name, out_pipe, in_pipe):
     count = 0
     temp = None
-
+    expected = [1,0]
+    wait_list = []
+    received_list = []
     while True:
         #cwnd = 1
         #yield env.timeout(random.randint(6, 8))
@@ -111,35 +118,44 @@ def des_run(env, name, out_pipe, in_pipe):
         #    packet = MakePacket(name, cwnd, i)
         #    Send(name,packet,out_pipe)
         received = yield in_pipe.get()
-
         if received["target"] == "node" and received["des"] == name :
-            #print(received)
-            temp = received
-            print(str(env.now) + " destination node " + str(name) +" received packet")
-            if received["route"][-1] != name:
-                #Send(name,received,out_pipe)
-                print("")
-            else:
-                count = count+0.5
-                print("finally received ")
-                if count == int(count):
-                    print("destination : " + str(int(count)))
-                    packet = MakePacket(name, received["cwnd"], received["cnt"],True)
+            if received not in received_list:
+                #print(received)
+                temp = received
+                print(str(env.now) + " destination node " + str(name) +" received packet")
+                if received["route"][-1] != name:
+                    #Send(name,received,out_pipe)
+                    print("")
+                else:
+                    if expected == [received["cwnd"],received["cnt"]] or expected[0]==0:
+                        received_list.append(received)
+                        received_list += wait_list
+                        count = count+1
+                        print("finally received ")
+                        print("destination : " + str(int(count)))
+                        packet = MakePacket(name, received["cwnd"], received["cnt"],True)
 
-                    Send(name, packet, out_pipe)
-                    print("sent ack")
-
-                received = None
-                # TODO 만약 예상하는 다음 패킷이 안왔을 경우 중복 ACK 보내기
-            #print(packet)
+                        Send(name, packet, out_pipe)
+                        print("sent ack")
+                        if received["cwnd"] != received["cnt"]:
+                            print(received_list)
+                            expected = [received_list[-1]["cwnd"],received_list[-1]["cnt"]+1]
+                        else:
+                            expected = [0,1]
+                        received = None
+                    else :
+                        wait_list.append(received)
+                        packet = MakePacket(name, expected[1], expected[0], True)
+                        Send(name, packet, out_pipe)
+                        print(expected[1], expected[0])
+                #print(packet)
 
 def link_run(env, name, out_pipe, in_pipe):
     while True:
         #TODO CHANNEL 모델, 지연, 손실.. 등등 구현하기
         packet = yield in_pipe.get()
         if packet['target'] == "link" and set([packet['start'], packet['des']]) == set(name):
-            print(packet['route'])
-            print(str(env.now) + " link " + str(name) +" received packet")
+            #print(str(env.now) + " link " + str(name) +" received packet")
             Send(name, packet, out_pipe)
             #print(packet)
 
