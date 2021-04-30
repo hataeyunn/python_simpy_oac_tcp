@@ -82,6 +82,7 @@ def medi_run(env, name, out_pipe, in_pipe):
 
 
 def source_run(env, name, out_pipe, in_pipe):
+    #TODO 프로세스단위로 바꿈
     file_size = 5120000
     total_num_cwnd = file_size / m_packetsize
     sent = []
